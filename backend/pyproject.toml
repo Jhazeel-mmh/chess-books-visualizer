@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cbv"
+version = "0.1.0"
+description = "Chess Books Visualizer backend: extracts moves and diagrams from chess books"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "python-multipart>=0.0.9",
+  "chess>=1.11",
+  "pymupdf>=1.24",
+  "lxml>=5.2",
+  "numpy>=1.26",
+  "opencv-python-headless>=4.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+# Only to rebuild the diagram classifier (tools/vision_*.py); install torch from
+# https://download.pytorch.org/whl/cpu to avoid the large GPU build.
+train = ["torch>=2.2", "onnx>=1.16", "onnxscript>=0.1"]
+
+[tool.setuptools.packages.find]
+include = ["cbv*"]
+
+[tool.setuptools.package-data]
+"cbv.vision" = ["pieces.onnx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

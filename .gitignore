@@ -1,0 +1,18 @@
+# Your own books: never commit them
+samples/
+
+# Python
+backend/.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Local app data (normally in ~/.local/share/chess-books-visualizer)
+.data/
+
+# Stockfish engine files, copied from node_modules on install
+frontend/public/engine/
