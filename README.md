@@ -189,9 +189,220 @@ Imported books and the analysis results are stored in `~/.local/share/chess-book
 (set `CBV_DATA_DIR` to change this). Put your own test books in `samples/`; that folder is
 git-ignored.
 
-## Licenses
+## Running it as a website
 
-The backend uses `python-chess` (GPL-3.0) and `PyMuPDF` (AGPL-3.0), and the frontend runs
-Stockfish (`stockfish` npm package, GPL-3.0; copied to `frontend/public/engine/` on install) and
-`chess.js` (BSD-2-Clause). That is fine for a personal local app; distributing the app as closed
-source would mean replacing the GPL/AGPL parts.
+By default the app is local: one reader, no sign-in. With `CBV_HOSTED=1` it serves many people,
+and each one signs in and sees only their own books:
+
+- **Accounts:** sign-up is confirmed by a link sent to the email, and passwords are reset the
+  same way. Passwords are kept as Argon2id hashes; sessions and mailed links only as hashes of
+  their tokens. Nothing tells a visitor whether an email has an account.
+- **Separate libraries:** each account's books, analyses, notes and training record are in
+  `<data>/users/<account id>/`. A request only looks in its own account's library, so another
+  reader's book answers 404. The same file imported by two people is two separate copies.
+- **Sessions:** an HttpOnly, Secure, SameSite=Lax cookie. Requests that change something are
+  refused when they come from another site.
+- **Signing up** accepts the terms of use (the server refuses a sign-up without). An account whose
+  email nobody confirms is forgotten after 7 days.
+- **Closing an account** (confirmed with the password) deletes the account and its whole library.
+- **Signing out** also makes the browser forget where that reader was in each book.
+
+| Setting | What it is |
+|---|---|
+| `CBV_HOSTED=1` | Turns accounts on. |
+| `CBV_PUBLIC_URL` | The site's address (`https://…`): for the links in emails, the cross-site check and the legal pages. |
+| `CBV_SMTP_HOST`, `CBV_SMTP_PORT`, `CBV_SMTP_USER`, `CBV_SMTP_PASSWORD`, `CBV_MAIL_FROM` | The mail server. Without one, mail is only written to the server log. |
+| `CBV_COPYRIGHT_EMAIL` | The copyright agent's address: copyright notices and counter-notices are sent there as they arrive. |
+| `CBV_OPERATOR`, `CBV_OPERATOR_ADDRESS` | Who runs the site (a person's or a company's legal name) and their postal address, as the legal pages name them. |
+| `CBV_CONTACT_EMAIL` | Where privacy requests and anything else go. |
+| `CBV_COPYRIGHT_AGENT` | The copyright agent as registered with the US Copyright Office: name, postal address, phone. |
+| `CBV_COOKIE_SECURE=0` | Only to try the hosted mode over plain HTTP. |
+| `CBV_MAX_UPLOAD_MB` | The largest book file (default 100). |
+| `CBV_MAX_BOOKS`, `CBV_MAX_STORAGE_MB` | What a free account may keep: books (default 3), and their files together (default 300 MB). |
+| `CBV_PLUS_MAX_BOOKS`, `CBV_PLUS_MAX_STORAGE_MB` | The same for Plus (defaults 300 books, 5000 MB). |
+| `CBV_FREE_TRAINER_SESSIONS` | Daily-trainer sessions a free account may start, once and for all (default 7). Counted only while Plus is on sale. |
+| `CBV_PADDLE_API_KEY`, `CBV_PADDLE_CLIENT_TOKEN`, `CBV_PADDLE_PRICE`, `CBV_PADDLE_WEBHOOK_SECRET` | Selling Plus through Paddle (see Plans and ads). Without all four, nothing is sold. |
+| `CBV_PADDLE_SANDBOX=1` | Uses Paddle's test environment (sandbox keys and test cards). |
+| `CBV_ADSENSE_CLIENT`, `CBV_ADSENSE_SLOT` | Google AdSense's publisher id (`ca-pub-…`) and a display ad unit's id. Without both, no ads. |
+| `CBV_ANALYSIS_MINUTES`, `CBV_ANALYSIS_MEMORY_MB` | When a book's analysis is stopped (defaults 20 minutes, and 4096 MB of address space). |
+| `CBV_WORKERS` | How many books are analysed at once (default 2). |
+| `VITE_SOURCE_URL` | When building the frontend: the public repository (see License). |
+
+The limits apply only when hosted (the local app has none); 0 turns one off. Changing one is
+changing the setting and restarting the app: there is no admin page.
+
+Try it locally with a separate data folder, so your own library isn't mixed in:
+`CBV_HOSTED=1 CBV_DATA_DIR=/tmp/cbv-hosted CBV_COOKIE_SECURE=0 make dev`. The sign-up links
+appear in the backend's log.
+
+### Keeping the server up
+
+Anyone can sign up, so the site expects some uploads and requests to be hostile:
+
+- **Uploads** are copied to disk a piece at a time, and stopped past `CBV_MAX_UPLOAD_MB` (Caddy
+  stops them first). What a file is comes from its content, not its name: only PDF and EPUB are
+  taken. An EPUB is a zip file, and one that would unpack to more than 1 GB or 10,000 files (a
+  "zip bomb") is refused. Other request bodies are at most 16 MB.
+- **Quotas:** a free account keeps at most `CBV_MAX_BOOKS` books, and `CBV_MAX_STORAGE_MB` of
+  book files; Plus, `CBV_PLUS_MAX_*`. The library shows how much is used.
+- **Analysis in worker processes** (`backend/cbv/jobs.py`): each book is read in a process of its
+  own, at a lower priority than the server. It is stopped past `CBV_ANALYSIS_MINUTES` or
+  `CBV_ANALYSIS_MEMORY_MB`, and the book shows why. A file that crashes or hangs the PDF reader
+  fails alone. At most `CBV_WORKERS` books are read at once, one per account, with accounts taking
+  turns. The sample books need at most 5 minutes and 3 GB of address space (the readers reserve
+  1.5 GB of it before reading anything).
+- **Rate limits** (`backend/cbv/ratelimit.py`), counted in the server's memory:
+
+  | What | How often |
+  |---|---|
+  | Sign-in | 20 tries per 10 minutes from one address; 10 wrong passwords per 15 minutes for one account, from anywhere |
+  | Sign-up | 10 per hour from one address |
+  | Mail (confirmation, password reset) | 5 per hour to one address, 10 requests per hour from one |
+  | Deleting the account | 10 password checks per hour |
+  | Uploads | 30 per hour per account |
+  | Copyright notices | 5 per hour from one address |
+
+  An IPv6 client counts as its whole /64. The server must run as one process: with two, each
+  would count apart. The addresses and emails counted are never written to disk, and are
+  forgotten an hour after their last try (the privacy notice says so).
+- **Page images** of a PDF are drawn at the one size the app shows, with at most 25 million
+  pixels (a PDF page can say it is 5 m wide). They are kept while someone looks at them: `purge`
+  deletes the ones nobody opened in 7 days.
+
+### Deploying
+
+`Dockerfile` builds two images, and `deploy/compose.yaml` runs them on one server:
+
+- **app:** the API, run by uvicorn as one process, with the data in a Docker volume. It keeps no
+  access log, and Caddy neither: the privacy notice says so. Docker keeps what the containers
+  print, at most 30 MB each.
+- **web:** Caddy. It gets HTTPS certificates from Let's Encrypt, sends HSTS and other security
+  headers, serves the built frontend, and passes `/api` (and `/ads.txt`) to the app with the
+  client's real address.
+- **purge:** runs `scripts/admin.py purge` once a day.
+
+```sh
+cp deploy/site.env.example deploy/site.env    # fill in the domain, mail server and repository
+docker compose -f deploy/compose.yaml --env-file deploy/site.env up -d --build
+docker compose -f deploy/compose.yaml exec app python /app/scripts/admin.py notices
+```
+
+A worker can use about 2.5 GB of real memory before its limit stops it (the sample books needed at
+most 1.1 GB). With the default two workers, give the server at least 6 GB, and 8 GB to be
+comfortable.
+
+### Legal pages
+
+A hosted site shows, in its footer and on the sign-up form, its terms of use (`/terms`), privacy
+notice (`/privacy`, the *aviso de privacidad* of Mexico's LFPDPPP) and copyright policy
+(`/copyright/policy`). They are written in Spanish, the version that prevails, and translated to
+English, in `frontend/src/policies/*.md`. Their blanks (`{operator}`, `{strikes}`…) are filled from
+the settings above and from the rules in the code, through `/api/legal`; a setting that isn't set
+shows its name in red, and the server warns at start-up. A test checks that both languages have the
+same sections, blanks and links.
+
+They are drafts, written for a Mexican lawyer to review before the site opens. What they say about
+the data must stay true of the code: when the code starts keeping something new, or keeping it for
+longer, change the privacy notice in the same change.
+
+### Plans and ads
+
+A hosted site has two plans, shown to anyone at `/plans`: the free plan, and **Plus**, a
+subscription that gives more books and storage, an unlimited daily trainer and no ads. A free
+account may try the trainer `CBV_FREE_TRAINER_SESSIONS` times; the reader, the problems and the
+cycles are free and unlimited on both. When Plus ends nothing is deleted: the books stay readable,
+and new ones fit once the library is back within the free plan.
+
+**Payments** (`backend/cbv/billing.py`) go through [Paddle](https://www.paddle.com), the
+merchant of record: Paddle sells Plus to the reader, charges the taxes of their country, invoices
+and refunds them, and pays the site. The site never sees a card; it keeps Paddle's customer and
+subscription ids, the status and the dates. To sell Plus:
+
+1. In Paddle (start with its sandbox and `CBV_PADDLE_SANDBOX=1`), create the product and its
+   recurring price (`pri_…`: `CBV_PADDLE_PRICE`); its amount, currency, period and any free trial
+   are set there, and `/plans` shows them.
+2. Create an API key (`CBV_PADDLE_API_KEY`) that can read prices, create customer portal sessions
+   and cancel subscriptions, and a client-side token (`CBV_PADDLE_CLIENT_TOKEN`).
+3. Add a notification destination for `https://<domain>/api/billing/webhook` with the
+   `subscription.*` events; its secret key is `CBV_PADDLE_WEBHOOK_SECRET`. The app refuses any
+   webhook not signed with it, or signed more than 5 minutes before.
+4. Set the default payment link to `https://<domain>/plans`, and have Paddle approve the domain.
+   Paddle reviews the site: the plans page, the terms (which name Paddle as merchant of record and
+   explain renewal and cancelling) and the privacy notice are there for that.
+
+The browser opens Paddle's checkout over `/plans` with the account's id in its custom data, and
+Paddle's webhooks tell the server what became of the subscription. The account page opens
+Paddle's customer portal (invoices, the card) and has a one-click “Cancel subscription”: cancelling
+is as easy as subscribing, as Mexico's consumer law asks. Deleting an account cancels its
+subscription first, at once, and the account isn't deleted if Paddle can't be told. Closing an
+account (copyright strikes, `admin.py close`) cancels it too, or says to do it in Paddle's
+dashboard.
+
+**Ads** (`frontend/src/components/AdSlot.tsx`) are Google AdSense display units, for free
+accounts, only on pages that show nothing of a book: the library, and the trainer's start and
+summary. Never in the reader, the solver or a trainer block: AdSense allows no ads beside content
+the site has no rights to, and a host that earns money from its users' infringing uploads loses
+the law's protection. A test checks which pages have them. The AdSense script loads only when the
+first ad is shown. In AdSense:
+
+- turn **Auto ads off**: they would place ads anywhere, the reader too;
+- create a GDPR message in **Privacy & messaging**: Google's certified consent banner for visitors
+  from the EEA, the UK and Switzerland;
+- leave third-party ad serving off, or name those vendors in the privacy notice.
+
+The app serves `/ads.txt` from `CBV_ADSENSE_CLIENT`.
+
+### Copyright notices
+
+A site that keeps what its users upload is protected from their copyright infringements only if
+it acts on notices: Mexico's LFDA (arts. 114 Septies and 114 Octies) and the US DMCA (§ 512) both
+ask for this. The process is in `backend/cbv/copyright.py`:
+
+- **On upload** the reader confirms that the book is theirs to use, for their own study only.
+  When they did is kept with the book.
+- **Notices:** anyone can send one with the form at `/copyright` (linked from the copyright policy). It asks
+  for what the LFDA and the DMCA require. A rights holder can't see anyone's uploads, so they name
+  the work. They can also pick their copy of the file: the browser sends only its SHA-256
+  fingerprint, never the file.
+- **Takedowns:** the copyright agent runs `scripts/admin.py` on the server, with the app's
+  settings, to find the uploads a notice names and disable them. The owner still sees a disabled
+  book listed but can't open it (the server answers 451). They get an email saying why, and how to
+  answer with a counter-notice. The agent can also block a file's fingerprint, so nobody can
+  upload it again.
+- **Counter-notices:** the agent forwards them to whoever sent the notice, and restores the book
+  after 15 business days (the LFDA's term; weekends and Mexico's official holidays don't count)
+  unless that person shows they started a court or administrative action, a criminal complaint or
+  mediation.
+- **Rejected notices:** `reject N "why"` tells whoever sent the notice why it won't be acted on.
+- **Strikes:** each notice that disables an account's books is a strike until the books are
+  restored. At 3 strikes the account is closed. Strikes stay with the email, even if the account
+  is deleted and created again.
+- **Deletion:** `purge` deletes disabled books nobody answered for within 30 days, and the
+  libraries of accounts closed more than 30 days ago.
+
+```
+python scripts/admin.py notices              # new notices; then: notice N, find --notice N | --title "…"
+python scripts/admin.py disable N BOOK...    # takes down every copy of those books (--account EMAIL: one)
+python scripts/admin.py counters             # then: counter C, forward C, restore T [--now]
+python scripts/admin.py account EMAIL        # an account's books, takedowns and strikes
+python scripts/admin.py purge                # daily: the purge service of deploy/compose.yaml runs it
+```
+
+## License
+
+Chess Books Visualizer is free software under the GNU Affero General Public License, version 3
+or later (see `LICENSE`). It has to be: the backend reads PDFs with `PyMuPDF` (AGPL-3.0) and
+moves with `python-chess` (GPL-3.0), and the browser runs Stockfish (`stockfish` npm package,
+GPL-3.0).
+
+What the AGPL asks of a site that runs it for others, and how the app does it:
+
+- **Source code for every user.** Build the frontend with `VITE_SOURCE_URL` set to the public
+  repository; the footer and the Licenses page (`/licenses`) link to it.
+- **Stockfish's license and source.** Its license is copied next to the engine
+  (`/engine/Copying.txt`) and the Licenses page links its exact source.
+- **Notices of the other libraries.** The Licenses page lists the server's libraries
+  (`/api/licenses`, read from what is installed) and the browser's, with their license texts
+  (`/licenses.json`, written by `frontend/scripts/notices.mjs` before every dev run and build).
+- **The pieces.** The drawings are Colin M. L. Burnett's (GPL, BSD or GFDL), credited on the
+  Licenses page.

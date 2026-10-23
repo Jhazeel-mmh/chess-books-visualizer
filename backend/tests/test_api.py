@@ -14,7 +14,8 @@ def client(tmp_path, monkeypatch):
 
 
 def wait_until_done(client, book_id):
-    for _ in range(100):
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
         meta = client.get(f"/api/books/{book_id}").json()
         if meta["status"] in ("ready", "error"):
             return meta
@@ -22,13 +23,21 @@ def wait_until_done(client, book_id):
     raise AssertionError("analysis did not finish")
 
 
+def test_the_server_libraries_are_listed_with_their_licenses(client):
+    packages = {p["name"].lower(): p for p in client.get("/api/licenses").json()}
+    # The two that decide the app's own license (AGPL), and one a requirement brings along.
+    assert "AFFERO" in packages["pymupdf"]["license"].upper()
+    assert packages["chess"]["license"].startswith("GPL")
+    assert "starlette" in packages and "pytest" not in packages
+
+
 def test_upload_list_and_delete(client):
-    meta = client.post("/api/books", files={"file": ("old.djvu", b"not a real book")}).json()
-    assert meta["title"] == "old" and meta["format"] == "djvu"
+    meta = client.post("/api/books", files={"file": ("old.pdf", b"%PDF-1.4 not a real book")}).json()
+    assert meta["title"] == "old" and meta["format"] == "pdf"
     assert [b["id"] for b in client.get("/api/books").json()] == [meta["id"]]
 
     done = wait_until_done(client, meta["id"])
-    assert done["status"] == "error" and done["error"].startswith("unsupported")
+    assert done["status"] == "error"
     assert client.get(f"/api/books/{meta['id']}/analysis").status_code == 404
 
     assert client.delete(f"/api/books/{meta['id']}").status_code == 204
@@ -36,8 +45,8 @@ def test_upload_list_and_delete(client):
 
 
 def test_same_file_is_imported_once(client):
-    a = client.post("/api/books", files={"file": ("a.pdf", b"same bytes")}).json()
-    b = client.post("/api/books", files={"file": ("b.pdf", b"same bytes")}).json()
+    a = client.post("/api/books", files={"file": ("a.pdf", b"%PDF-1.4 same bytes")}).json()
+    b = client.post("/api/books", files={"file": ("b.pdf", b"%PDF-1.4 same bytes")}).json()
     assert a["id"] == b["id"]
     wait_until_done(client, a["id"])
 
@@ -91,7 +100,7 @@ def test_correcting_a_diagram_reanalyses_with_the_fix(client):
 
 
 def test_progress_and_annotations_are_kept_per_book(client):
-    book = client.post("/api/books", files={"file": ("a.pdf", b"some bytes")}).json()["id"]
+    book = client.post("/api/books", files={"file": ("a.pdf", b"%PDF-1.4 some bytes")}).json()["id"]
     assert client.get(f"/api/books/{book}/user/progress").json() == {}
     progress = {"problems": {"p3:40,300": {"result": "solved", "tries": 1, "hints": 0, "ms": 4200}}}
     assert client.put(f"/api/books/{book}/user/progress", json=progress).status_code == 204
@@ -105,7 +114,7 @@ def test_progress_and_annotations_are_kept_per_book(client):
 
 
 def test_move_fixes_are_checked_and_saved(client):
-    book = client.post("/api/books", files={"file": ("a.pdf", b"other bytes")}).json()["id"]
+    book = client.post("/api/books", files={"file": ("a.pdf", b"%PDF-1.4 other bytes")}).json()["id"]
     wait_until_done(client, book)
     assert client.get(f"/api/books/{book}/move-fixes").json() == []
     start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"

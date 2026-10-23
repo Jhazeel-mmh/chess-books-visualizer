@@ -31,7 +31,8 @@ export function Reader() {
     queryFn: () => api.book(id),
     refetchInterval: (q) => (busy(q.state.data) ? 1500 : false),
   })
-  const ready = book.data?.status === 'ready'
+  // A book disabled after a copyright notice can't be opened: nothing of it loads.
+  const ready = book.data?.status === 'ready' && !book.data.disabled
   // While a correction is being applied the last analysis stays on screen.
   const analysis = useQuery({ queryKey: ['analysis', id], queryFn: () => api.analysis(id), enabled: ready })
   const layout = useQuery({ queryKey: ['layout', id], queryFn: () => api.layout(id), enabled: ready })
@@ -78,7 +79,8 @@ export function Reader() {
         {analysis.data && !solving && <Coverage analysis={analysis.data} />}
         {busy(book.data) && analysis.data && <span className="badge busy">{t('reader.updating')}</span>}
       </div>
-      {book.data && !ready && !analysis.data && <p className="notice">{t('reader.notReady')}</p>}
+      {book.data?.disabled && <p className="notice">{t('reader.disabled')}</p>}
+      {book.data && !book.data.disabled && !ready && !analysis.data && <p className="notice">{t('reader.notReady')}</p>}
       {analysis.data && solving && (
         <Suspense fallback={<p className="notice">{t('mode.loading')}</p>}>
           <Solver

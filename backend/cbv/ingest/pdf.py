@@ -194,8 +194,14 @@ class PdfBook:
         }
 
 
+# The largest page image rendered: a page may say it is huge (a PDF page can be 5 m wide).
+MAX_PIXELS = 25_000_000
+
+
 def render_page(path: Path, page: int, zoom: float) -> bytes:
     with pymupdf.open(path) as pdf:
+        area = max(1.0, pdf[page].rect.width * pdf[page].rect.height)
+        zoom = min(zoom, math.sqrt(MAX_PIXELS / area))
         pix = pdf[page].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
         return pix.tobytes("png")
 

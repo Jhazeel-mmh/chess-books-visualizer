@@ -1,0 +1,13 @@
+.git
+samples
+.data
+deploy/site.env
+backend/.venv
+backend/build
+**/*.egg-info
+**/__pycache__
+**/.pytest_cache
+frontend/node_modules
+frontend/dist
+frontend/public/engine
+frontend/public/licenses.json

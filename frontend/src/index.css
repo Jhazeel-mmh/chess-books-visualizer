@@ -52,7 +52,7 @@ button, .button, select {
   align-items: center;
   gap: 0.3rem;
 }
-button:disabled { opacity: 0.5; cursor: default; }
+button:disabled, .button.disabled { opacity: 0.5; cursor: default; }
 .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -73,6 +73,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 /* Library */
 .library { max-width: 860px; margin: 0 auto; padding: 1.5rem 1rem; display: grid; gap: 1rem; }
 .import { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+.import .usage { display: block; }
 .books { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
 .book {
   background: var(--surface);
@@ -372,3 +373,78 @@ button.danger-outline { border-color: var(--error); color: var(--error); }
 .modal h3 { margin: 0; }
 .modal p { margin: 0; }
 .modal .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: flex-end; margin-top: 0.4rem; }
+
+/* Footer and legal pages */
+.app-footer { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.4rem 1.2rem; padding: 1.5rem 1rem; font-size: 0.85rem; color: var(--muted); }
+.legal { max-width: 860px; margin: 0 auto; padding: 1.5rem 1rem; display: grid; gap: 1.4rem; }
+.legal h1 { font-size: 1.4rem; margin: 0; }
+.legal section { display: grid; gap: 0.5rem; }
+.legal p { margin: 0; }
+.legal-links { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; }
+.packages { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; font-size: 0.9rem; }
+.packages summary { cursor: pointer; }
+.packages pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+  max-height: 20rem;
+  overflow-y: auto;
+  margin: 0.3rem 0 0.6rem;
+  padding: 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.policy { max-width: 46rem; margin: 0 auto; padding: 1.5rem 1rem; line-height: 1.55; overflow-wrap: anywhere; }
+.policy h1 { font-size: 1.4rem; margin: 0 0 0.6rem; }
+.policy h2 { font-size: 1.1rem; margin: 1.6rem 0 0.5rem; }
+.policy p, .policy ul, .policy ol { margin: 0 0 0.7rem; }
+.policy ul, .policy ol { padding-left: 1.4rem; }
+.policy li + li { margin-top: 0.35rem; }
+.policy .unset { color: var(--error); font-family: ui-monospace, monospace; font-size: 0.9em; }
+
+/* Accounts (hosted app) */
+.header-account { margin-right: 0.9rem; text-decoration: none; }
+.auth { max-width: 26rem; margin: 0 auto; padding: 2rem 1rem; display: grid; gap: 1.2rem; }
+.auth.account { max-width: 36rem; }
+.auth h1 { font-size: 1.4rem; margin: 0; }
+.auth p { margin: 0; }
+.auth-form { display: grid; gap: 0.8rem; }
+.auth-form label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+.auth-form input { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.45rem 0.6rem; }
+.auth-form > .button.primary { justify-content: center; }
+.auth-problem { color: var(--error); font-size: 0.9rem; }
+.auth-links { font-size: 0.9rem; color: var(--muted); }
+.account section { display: grid; gap: 0.6rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.account-danger h2 { color: var(--error); }
+
+/* Plans (hosted app): free and Plus, and the ads free accounts see */
+.plans { max-width: 46rem; margin: 0 auto; padding: 1.5rem 1rem; display: grid; gap: 1rem; }
+.plans h1 { font-size: 1.4rem; margin: 0; }
+.plans > p { margin: 0; }
+.plan-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem; }
+.plan-card { display: grid; gap: 0.6rem; align-content: start; padding: 1rem 1.2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.plan-card.plus { border-color: var(--accent); }
+.plan-card h2 { font-size: 1.15rem; margin: 0; }
+.plan-card p { margin: 0; }
+.plan-card ul { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.3rem; }
+.plan-price { font-size: 1.1rem; font-weight: 600; }
+.plan-card > button { justify-self: start; }
+.plan-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.plan-actions:empty { display: none; }
+.ad-slot { display: grid; gap: 0.2rem; margin: 1.5rem 0 0; min-height: 90px; }
+.ad-label { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* Copyright: the upload declaration, disabled books, the notice forms */
+.import .declare { flex-basis: 100%; display: flex; gap: 0.5rem; align-items: flex-start; font-size: 0.9rem; }
+.import .declare input { margin-top: 0.2rem; }
+.import .auth-problem { flex-basis: 100%; margin: 0; }
+.disabled-detail { color: var(--error); }
+.copyright { max-width: 40rem; }
+.copyright .auth-form textarea { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.45rem 0.6rem; resize: vertical; }
+.auth-form .statement { display: flex; gap: 0.5rem; align-items: flex-start; }
+.auth-form .statement input { margin-top: 0.2rem; padding: 0; }
+.copyright blockquote { margin: 0; padding: 0.4rem 0.8rem; border-left: 3px solid var(--border); white-space: pre-wrap; }
+.copyright fieldset { border: 1px solid var(--border); border-radius: 6px; display: grid; gap: 0.8rem; padding: 0.8rem; margin: 0; }
+.copyright legend { font-weight: 600; padding: 0 0.3rem; }

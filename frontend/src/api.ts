@@ -22,6 +22,49 @@ export interface BookMeta {
   /** Fraction of the book read while analyzing. */
   progress?: number | null
   imported_at: string
+  /** Hosted app: when the reader said the book is theirs to use. */
+  declared_at?: string
+  /** Disabled after a copyright notice: listed, but it can't be opened. */
+  disabled?: Disabled
+}
+
+export interface Disabled {
+  at: string
+  /** Who the notice was sent for, and the work it named. */
+  claimant: string
+  work: string
+  /** When its owner sent a counter-notice. */
+  counter_at?: string
+}
+
+/** A copyright notice, as the form at /copyright sends it. */
+export interface CopyrightNotice {
+  name: string
+  email: string
+  phone: string
+  address: string
+  /** The rights holder it is sent for. */
+  claimant: string
+  work: string
+  location: string
+  /** SHA-256 of the sender's copy of the file, worked out in the browser. */
+  sha256: string | null
+  signature: string
+  good_faith: true
+  accurate: true
+  lang: string
+}
+
+/** The answer of a disabled book's owner. */
+export interface CounterNotice {
+  name: string
+  address: string
+  phone: string
+  reason: string
+  signature: string
+  good_faith: true
+  jurisdiction: true
+  lang: string
 }
 
 /** [block index, start, end] of the text a move was read from. */
@@ -276,21 +319,155 @@ export interface TrainerBook {
   uses: Record<BlockKind, boolean>
 }
 
+/** A library the app is built from, with its license (for the Licenses page). */
+export interface Package {
+  name: string
+  version: string
+  license: string | null
+  /** Its source (browser libraries) or home page (server libraries). */
+  repository?: string | null
+  home?: string | null
+  /** The license text the package ships (browser libraries). */
+  text?: string | null
+}
+
+/** Who is signed in: the local app has no accounts; a hosted one shows its sign-in page to nobody. */
+export interface Me {
+  hosted: boolean
+  user: { email: string } | null
+}
+
+/** What a hosted account keeps, and the most it may (0: no limit). */
+export interface Usage {
+  books: number
+  bytes: number
+  max_books: number
+  max_bytes: number
+  max_upload: number
+}
+
+/** What a hosted site's legal pages fill their blanks with (null: not set on the server). */
+export interface Legal {
+  site: string
+  operator: string | null
+  address: string | null
+  contact: string | null
+  copyright_email: string | null
+  copyright_agent: string | null
+  strikes: number
+  keep_days: number
+  wait_days: number
+  session_days: number
+  unverified_days: number
+  render_days: number
+}
+
+/** A hosted account's plan: free, or Plus (sold through Paddle; see the backend's billing.py). */
+export interface Plan {
+  plus: boolean
+  /** Paddle's status of the subscription: "active", "trialing", "past_due" (a payment failed), "canceled"… */
+  status: string | null
+  /** The end of the period paid for. */
+  until: string | null
+  /** When a cancellation the reader asked for takes effect. */
+  cancel_at: string | null
+  selling: boolean
+  /** Paddle's customer portal can be opened: the account bought Plus once. */
+  manage: boolean
+  /** What Paddle's checkout opens with (null: Plus isn't on sale here, or the account has it). */
+  checkout: Checkout | null
+  /** The ad unit a free account sees on pages without a book (null: no ads). */
+  ads: { client: string; slot: string } | null
+  /** Trainer sessions a free account may still start (null: no limit). */
+  trainer_left: number | null
+}
+
+export interface Paddle {
+  token: string
+  sandbox: boolean
+}
+
+export interface Checkout extends Paddle {
+  price: string
+  email: string
+  user: string
+}
+
+/** Plus's price as Paddle has it: the amount in the currency's smallest unit (cents). */
+export interface Price {
+  amount: string
+  currency: string
+  interval: 'day' | 'week' | 'month' | 'year' | null
+  frequency: number | null
+  trial_interval: 'day' | 'week' | 'month' | 'year' | null
+  trial_frequency: number | null
+}
+
+/** What each plan of a hosted site gives (0: no limit). */
+export interface Plans {
+  selling: boolean
+  price: Price | null
+  /** Paddle's client-side token, to open the checkout links Paddle sends (null: Plus isn't on sale). */
+  paddle: Paddle | null
+  ads: boolean
+  upload_mb: number
+  free: { books: number; storage_mb: number; trainer_sessions: number }
+  plus: { books: number; storage_mb: number }
+}
+
+/** Sent when the server says the session is over (hosted app), so the app shows the sign-in page. */
+export const SIGNED_OUT = 'cbv:signed-out'
+
+export class ApiError extends Error {
+  status: number
+  /** The server's reason: "credentials", "unverified", "closed", "link", "email", "password", "terms" (account forms);
+   *  "blocked", "disabled", "sent" (copyright); "too_big", "unpacked", "format", "books", "storage" (uploads);
+   *  "too_many" (any form tried too often); "plus" (the free trainer sessions are spent);
+   *  "billing" (Paddle didn't answer). */
+  detail: string | null
+
+  constructor(status: number, statusText: string, detail: string | null) {
+    super(`${status} ${statusText}`)
+    this.status = status
+    this.detail = detail
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) {
+    if (res.status === 401 && !url.startsWith('/api/auth/')) window.dispatchEvent(new Event(SIGNED_OUT))
+    const detail = await res.json().then((b) => (typeof b?.detail === 'string' ? b.detail : null), () => null)
+    throw new ApiError(res.status, res.statusText, detail)
+  }
   return res.status === 204 ? (undefined as T) : res.json()
 }
 
+const post = (url: string, body?: unknown) =>
+  request<void>(url, body === undefined ? { method: 'POST' } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+
 export const api = {
+  me: () => request<Me>('/api/auth/me'),
+  /** ``terms``: the reader accepted the terms of use (the server refuses a sign-up without). */
+  signUp: (email: string, password: string, lang: string, terms: boolean) => post('/api/auth/signup', { email, password, lang, terms }),
+  resend: (email: string) => post('/api/auth/resend', { email }),
+  verify: (token: string) => post('/api/auth/verify', { token }),
+  signIn: (email: string, password: string) => post('/api/auth/login', { email, password }),
+  forgot: (email: string) => post('/api/auth/forgot', { email }),
+  reset: (token: string, password: string) => post('/api/auth/reset', { token, password }),
+  signOut: () => post('/api/auth/logout'),
+  deleteAccount: (password: string) => post('/api/auth/delete-account', { password }),
   books: () => request<BookMeta[]>('/api/books'),
   book: (id: string) => request<BookMeta>(`/api/books/${id}`),
   analysis: (id: string) => request<Analysis>(`/api/books/${id}/analysis`),
-  upload: (file: File) => {
+  /** ``rights``: the reader said the book is theirs to use (the hosted app asks). */
+  upload: (file: File, rights = false) => {
     const body = new FormData()
     body.append('file', file)
+    if (rights) body.append('rights', 'true')
     return request<BookMeta>('/api/books', { method: 'POST', body })
   },
+  usage: () => request<Usage>('/api/usage'),
   remove: (id: string) => request<void>(`/api/books/${id}`, { method: 'DELETE' }),
   reanalyze: (id: string) => request<BookMeta>(`/api/books/${id}/analyze`, { method: 'POST' }),
   correctDiagram: (id: string, key: string, placement: string, turn: 'w' | 'b') =>
@@ -316,6 +493,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(fixes),
     }),
+  copyrightNotice: (notice: CopyrightNotice) =>
+    request<{ id: number }>('/api/copyright-notices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(notice) }),
+  counterNotice: (id: string, counter: CounterNotice) => post(`/api/books/${id}/counter-notice`, counter),
+  plan: () => request<Plan>('/api/plan'),
+  plans: () => request<Plans>('/api/plans'),
+  /** Links into Paddle's customer portal, good for a short time. */
+  portal: () => request<{ overview: string; cancel: string | null }>('/api/billing/portal', { method: 'POST' }),
+  serverLicenses: () => request<Package[]>('/api/licenses'),
+  legal: () => request<Legal>('/api/legal'),
+  /** Written at build time by scripts/notices.mjs. */
+  browserLicenses: () => request<{ packages: Package[] }>('/licenses.json').then((r) => r.packages),
   /** What the reader saved for a book: "progress" (solving) or "annotations" (arrows and circles). */
   userData: <T>(id: string, name: UserData) => request<T>(`/api/books/${id}/user/${name}`),
   saveUserData: (id: string, name: UserData, data: unknown) =>

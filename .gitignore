@@ -16,3 +16,8 @@ frontend/dist/
 
 # Stockfish engine files, copied from node_modules on install
 frontend/public/engine/
+# Third-party licenses, written before dev/build (frontend/scripts/notices.mjs)
+frontend/public/licenses.json
+
+# The hosted site's settings (deploy/site.env.example is the template)
+deploy/site.env

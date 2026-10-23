@@ -1,0 +1,62 @@
+# The hosted site on one server. Copy site.env.example to site.env, fill it in, then:
+#   docker compose -f deploy/compose.yaml --env-file deploy/site.env up -d --build
+# What the containers print (errors, mail that couldn't go out) is kept by Docker, at most 3 x 10 MB each.
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  app:
+    build:
+      context: ..
+      target: app
+    env_file: site.env
+    volumes:
+      - data:/data
+    restart: unless-stopped
+    logging: *logging
+    # Each book is analysed in a worker of up to CBV_ANALYSIS_MEMORY_MB of address space, about
+    # 2.5 GB of real memory, two at a time (CBV_WORKERS): give the server room for that.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+
+  # Once a day: what the copyright process says to delete, and page images nobody looked at.
+  purge:
+    build:
+      context: ..
+      target: app
+    env_file: site.env
+    volumes:
+      - data:/data
+    restart: unless-stopped
+    logging: *logging
+    command: ["sh", "-c", "while true; do python /app/scripts/admin.py purge; sleep 86400; done"]
+
+  web:
+    build:
+      context: ..
+      target: web
+      args:
+        VITE_SOURCE_URL: ${VITE_SOURCE_URL:?the public repository, for the source code link}
+    environment:
+      CBV_DOMAIN: ${CBV_DOMAIN:?the site's domain}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,49 @@
+# The site's front door: HTTPS (certificates from Let's Encrypt, renewed by Caddy), the built
+# frontend, and /api passed to the app. CBV_DOMAIN is the site's domain, e.g. chess.example.com.
+{$CBV_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+		-Server
+	}
+
+	# Request bodies are stopped here before the app sees them: a book upload is at most
+	# CBV_MAX_UPLOAD_MB (100 by default; keep this above it), anything else at most 16 MB.
+	@upload {
+		method POST
+		path /api/books
+	}
+	request_body @upload {
+		max_size 110MB
+	}
+	@other {
+		not {
+			method POST
+			path /api/books
+		}
+	}
+	request_body @other {
+		max_size 16MB
+	}
+
+	# Caddy replaces any X-Forwarded-For the client sent with the client's own address.
+	handle /api/* {
+		reverse_proxy app:8000
+	}
+	# Who may sell the site's ad space, from the app's settings.
+	handle /ads.txt {
+		reverse_proxy app:8000
+	}
+
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}

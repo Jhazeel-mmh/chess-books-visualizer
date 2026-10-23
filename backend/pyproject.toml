@@ -1,11 +1,12 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "cbv"
 version = "0.1.0"
 description = "Chess Books Visualizer backend: extracts moves and diagrams from chess books"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
@@ -16,6 +17,7 @@ dependencies = [
   "lxml>=5.2",
   "numpy>=1.26",
   "opencv-python-headless>=4.9",
+  "argon2-cffi>=23.1",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +30,7 @@ train = ["torch>=2.2", "onnx>=1.16", "onnxscript>=0.1"]
 include = ["cbv*"]
 
 [tool.setuptools.package-data]
-"cbv.vision" = ["pieces.onnx"]
+"cbv.vision" = ["*.onnx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

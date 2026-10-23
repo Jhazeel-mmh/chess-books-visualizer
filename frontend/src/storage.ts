@@ -19,3 +19,17 @@ export function save(key: string, value: unknown): void {
     // Not saved: the reader still works, it just won't remember.
   }
 }
+
+// What one reader kept (where they are in each book, the reading in progress). Forgotten when they
+// sign out of a hosted site, so the next person on this browser doesn't get it.
+const PERSONAL = ['pos.', 'mode.', 'train.']
+
+export function forgetPersonal(): void {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (PERSONAL.some((p) => key.startsWith(PREFIX + p))) localStorage.removeItem(key)
+    }
+  } catch {
+    // Nothing could be kept, so there is nothing to forget.
+  }
+}

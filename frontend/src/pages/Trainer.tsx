@@ -1,15 +1,17 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
-  api, type BlockKind, type CalcItem, type Focus, type Game, type GuessItem, type ItemResult, type PlanBlock, type ReadingItem,
+  api, ApiError, type BlockKind, type CalcItem, type Focus, type Game, type GuessItem, type ItemResult, type PlanBlock, type ReadingItem,
   type RunningSession, type TrainerBook, type TrainerRecord,
 } from '../api'
+import { AdSlot } from '../components/AdSlot'
 import { CalcTest } from '../components/CalcTest'
 import { GuessGame } from '../components/GuessGame'
 import { PlayOut } from '../components/PlayOut'
 import { formatTime, isoNow } from '../progress'
+import { usePlan } from '../plan'
 import { mainLine } from '../solve'
 import { load, save } from '../storage'
 import { advance, blockScore, cancelSession, finishSession, sessionDone, skipBlock, startSession, streak, treeOf, weekly } from '../trainer'
@@ -37,10 +39,17 @@ export function Trainer() {
 function Home({ record, update }: { record: TrainerRecord; update: (r: TrainerRecord) => void }) {
   const { t } = useTranslation()
   const books = useQuery({ queryKey: ['trainerBooks', record.roles, record.reading.book, record.sources], queryFn: api.trainerBooks })
+  const queryClient = useQueryClient()
   const start = useMutation({
     mutationFn: (test: boolean) => api.newSession(test),
-    onSuccess: (plan) => update(startSession(record, plan, isoNow())),
+    onSuccess: (plan) => {
+      queryClient.invalidateQueries({ queryKey: ['plan'] })
+      update(startSession(record, plan, isoNow()))
+    },
   })
+  // A free account on a site that sells Plus has a few sessions to try the trainer.
+  const left = usePlan()?.trainer_left ?? null
+  const spent = left === 0 || (start.error instanceof ApiError && start.error.detail === 'plus')
   const settings = record.settings
   const set = (changes: Partial<TrainerRecord['settings']>) => update({ ...record, settings: { ...settings, ...changes } })
   const [now] = useState(() => new Date())
@@ -53,14 +62,22 @@ function Home({ record, update }: { record: TrainerRecord; update: (r: TrainerRe
       <section className="train-start">
         <h2>{t('train.title')}</h2>
         <p className="hint">{t('train.intro')}</p>
-        <div className="train-buttons">
-          <button type="button" className="primary big" disabled={start.isPending} onClick={() => start.mutate(false)}>
-            {t('train.start', { minutes: settings.minutes })}
-          </button>
-          <button type="button" disabled={start.isPending} onClick={() => start.mutate(true)} title={t('train.testHint')}>
-            {t('train.test')}
-          </button>
-        </div>
+        {spent ? (
+          <div className="train-buttons">
+            <p className="notice">{t('train.trialOver')}</p>
+            <Link to="/plans" className="button primary">{t('plans.seePlus')}</Link>
+          </div>
+        ) : (
+          <div className="train-buttons">
+            <button type="button" className="primary big" disabled={start.isPending} onClick={() => start.mutate(false)}>
+              {t('train.start', { minutes: settings.minutes })}
+            </button>
+            <button type="button" disabled={start.isPending} onClick={() => start.mutate(true)} title={t('train.testHint')}>
+              {t('train.test')}
+            </button>
+          </div>
+        )}
+        {!spent && left !== null && <p className="hint">{t('train.trialLeft', { count: left })}</p>}
         {start.isPending && <p className="hint">{t('train.building')}</p>}
         {start.data && start.data.blocks.length === 0 && <p className="notice">{t('train.nothing')}</p>}
         {last?.note && <p className="train-note">{t('train.lastNote')} <em>{last.note}</em></p>}
@@ -124,6 +141,8 @@ function Home({ record, update }: { record: TrainerRecord; update: (r: TrainerRe
           <a href="https://nextlevelchess.com/fixing-your-skill-gap-step-by-step/" target="_blank" rel="noreferrer">{t('train.link.focus')}</a>
         </p>
       </section>
+
+      <AdSlot />
     </>
   )
 }
@@ -436,6 +455,7 @@ function Summary({ record, current, update }: { record: TrainerRecord; current: 
       <button type="button" className="primary" onClick={() => update(finishSession(record, focus, note.trim(), isoNow()))}>
         {t('train.save')}
       </button>
+      <AdSlot />
     </section>
   )
 }
