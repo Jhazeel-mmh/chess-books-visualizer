@@ -19,6 +19,7 @@ from ..notation.matcher import candidates as legal_candidates
 from ..notation.matcher import lookalikes
 from ..notation.pieces import PieceMap
 from ..notation.tokenizer import ParsedMove
+from . import decoder
 from .fragments import Close, Diagram, Event, FragMove, Fragment, Heading, Open, Ref, Result
 from .games import Game, Node, _Ids
 
@@ -35,6 +36,12 @@ FIX_SQUARES = 8
 CONTINUATION_MOVES = 3
 # OCR repairs: look-alike characters undone per fragment ("e4" read for "c4"), how far back
 # from where the fragment broke to look for them, and the moves each one must make legal.
+# Working a fragment out move by move (OCR) must read at least this many moves more than the repairs.
+DECODE_GAIN = 2
+# Picking a broken main line up again: the next fragment must be read this far (or to its end)…
+RESYNC_MOVES = 2
+# …and at most this many unread moves are carried over from the fragments before it.
+MAX_TAIL = 16
 MAX_REPAIRS = 2
 REPAIR_WINDOW = 10
 REPAIR_GAIN = 2
@@ -103,6 +110,9 @@ class _Anchorer:
         # ("2 Kh2" after an unreadable "1 Bd5+") continues that solution, so it can't start at the diagram.
         self.diagram_number: tuple[int, bool | None] | None = None
         self.labels: dict[str, Diagram] = {}
+        # Scans: the moves of a main-line fragment left unread where it broke off at the end of the game's
+        # line (the node), to be worked out together with the next main-line fragment (see ``resync``).
+        self.tail: tuple[Node, list[FragMove]] | None = None
 
     def run(self, events: list[Event]) -> Anchored:
         for ev in events:
@@ -110,7 +120,7 @@ class _Anchorer:
                 self.new_game_pending = True
                 self.pending_title = ev.title
                 if ev.game_header:
-                    self.game, self.cursor, self.stack = None, None, []
+                    self.game, self.cursor, self.stack, self.tail = None, None, [], None
                     if not self.diagram_from_ref:
                         self.diagram = None
             elif isinstance(ev, Diagram):
@@ -152,6 +162,12 @@ class _Anchorer:
     def place(self, frag: Fragment) -> None:
         main_style = frag.heading or (frag.bold if self.style == "bold" else frag.starts_para)
         moves = frag.moves
+        if self.tail and main_style and frag.ocr and self.repair:
+            done = self.resync(frag)
+            if done is not None:
+                if not done:
+                    return
+                moves = done
         bare_start = moves[0].number is None
         while moves:
             self.maybe_start_game(moves[0])
@@ -174,8 +190,20 @@ class _Anchorer:
 
             trials = [self.trial(p, moves, frag.ocr) for p in parents]
             best = max(trials, key=lambda t: len(t.moves), default=None)  # max() keeps the first of equals
+            if frag.ocr and self.repair and roots:
+                # A diagram printed just before the moves says where they start: in a scan, read them
+                # from it as well as possible before letting them go anywhere else in the game.
+                from_diagram = max((t for t in trials if any(t.parent is r for r in roots)), key=lambda t: len(t.moves))
+                if from_diagram.reason in ("illegal", "ambiguous"):
+                    from_diagram = self.repaired(from_diagram, moves)
+                    if from_diagram.reason is not None:
+                        from_diagram = self.decoded(from_diagram, moves)
+                if len(from_diagram.moves) >= min(2, len(moves)) and (best.reason or len(from_diagram.moves) >= len(best.moves)):
+                    best = from_diagram
             if best is not None and best.reason in ("illegal", "ambiguous") and frag.ocr and self.repair:
                 best = self.repaired(best, moves)
+                if best.reason is not None:
+                    best = self.decoded(best, moves)
             if roots and self.diagram.alternatives and (best is None or best.reason or not _mates_hold(best, moves)):
                 fixed = self.corrected_diagram(moves, roots, len(best.moves) if best else 0, frag.ocr)
                 if fixed is not None:
@@ -196,14 +224,21 @@ class _Anchorer:
                 reason = best.reason if best else "no_position"
                 j = _next_numbered(moves, 1)
                 self.unresolve(moves[:j], reason)
+                if main_style and moves is frag.moves:
+                    self.extend_tail(frag)
                 moves = moves[j:]
                 continue
 
             k = len(best.moves)
+            if main_style:
+                self.tail = None
             self.cursor = self.apply(best.parent, moves[:k], best.moves, main_style, best.guessed)
             self.out.moves_resolved += k
             if k == len(moves):
                 return
+            if main_style and frag.ocr and self.repair and not self.cursor.children:
+                # The main line broke off here: what is left may be read with the next fragment.
+                self.tail = (self.cursor, list(moves[k:]))
             # Re-place the rest from the next printed move number; what lies before it is unresolved.
             j = k if moves[k].number is not None else _next_numbered(moves, k + 1)
             if j > k:
@@ -213,9 +248,11 @@ class _Anchorer:
     def maybe_start_game(self, first: FragMove) -> None:
         if self.game is not None and not self.new_game_pending:
             return
-        if first.number not in ((1, False), (1, None)) or not legal_candidates(chess.Board(), first.move, self.pieces):
+        if first.number not in ((1, False), (1, None)):
             return
-        self.start_game_at(chess.STARTING_FEN)
+        # In a scan the first move may be garbled ("1.e4e6"): a game starts if some first move fits it.
+        if legal_candidates(chess.Board(), first.move, self.pieces) or (self.repair and decoder.plausible_start(self.pieces, first)):
+            self.start_game_at(chess.STARTING_FEN)
 
     def diagram_roots(self, first: FragMove) -> list[Node]:
         """The pending diagram as the starting position for this fragment's first move.
@@ -244,10 +281,19 @@ class _Anchorer:
                 roots.append(Node("pending", None, None, None, board.fen(), 0))
         return roots
 
+    def beyond_main_line(self, first: FragMove) -> bool:
+        """Whether the fragment's first move comes after the end of the game's main line."""
+        end = self.game.mainline()[-1]
+        board = chess.Board(end.fen)
+        end_ply = 2 * (board.fullmove_number - 1) + (board.turn == chess.BLACK)
+        number, black = first.number
+        ply = 2 * (number - 1) + (1 if black else 0)
+        return ply > end_ply
+
     def start_game_at(self, fen: str) -> Node:
         game = Game(f"g{len(self.out.games) + 1}", self.pending_title, fen, self.ids)
         self.out.games.append(game)
-        self.game, self.cursor, self.stack = game, game.root, []
+        self.game, self.cursor, self.stack, self.tail = game, game.root, [], None
         self.new_game_pending = False
         self.pending_title = None
         return game.root
@@ -260,6 +306,10 @@ class _Anchorer:
         sides = (not black,) if black is not None else (False, True)  # in doubt, Black first
         nodes = [n for side in sides for n in self.game.index.get((number, side), [])]
         if not nodes:
+            return []
+        if self.repair and main_style and self.tail is not None and self.beyond_main_line(first):
+            # A scan whose main line broke off (its unread tail waits): main-line moves printed further
+            # on belong to the part that is missing, not to a side line that happens to reach their number.
             return []
         on_path = {id(n) for n in self.cursor.path()} if self.cursor else set()
         on_main = {id(n) for n in self.game.mainline()}
@@ -384,6 +434,73 @@ class _Anchorer:
             if not beam or best.reason is None:
                 break
         return best
+
+    def resync(self, frag: Fragment) -> list[FragMove] | None:
+        """The main line picked up again where it broke off, reading its unread tail with this fragment.
+
+        "7.Bd3 'eNe7 8.Bf4 g5" breaks at the garbled 7...Qc7, which "8.Bf4 g5" alone can't decide;
+        "9.Bg3 Bg7 10.Qe2 Ne7" in the next fragment can. Only tried when the game has no position
+        at this fragment's move number. Returns None if it didn't work, else this fragment's moves
+        left to place (empty when all were read).
+        """
+        node, tail = self.tail
+        first = frag.moves[0]
+        if first.number is None or self.game is None or node.parent is None and node is not self.game.root:
+            return None
+        number, black = first.number
+        sides = (black,) if black is not None else (False, True)
+        if any(self.game.index.get((number, side)) for side in sides):
+            return None  # the fragment has a place to go already
+        moves = tail + frag.moves
+        found = decoder.decode(self.pieces, node.board(), moves, _number_fits, strict={0, len(tail)})
+        if len(found.moves) < len(tail) + min(RESYNC_MOVES, len(frag.moves)):
+            return None
+        k = len(found.moves)
+        self.reclaim(tail)
+        self.tail = None
+        self.cursor = self.apply(node, moves[:k], found.moves, True, found.guessed)
+        self.out.moves_resolved += k
+        rest = moves[k:]
+        if rest and not self.cursor.children:
+            self.tail = (self.cursor, list(rest))
+        return rest
+
+    def extend_tail(self, frag: Fragment) -> None:
+        """A main-line fragment that found no place joins the unread tail, if it follows on from it."""
+        if self.tail is None or not frag.ocr or not self.repair:
+            return
+        node, tail = self.tail
+        first = frag.moves[0]
+        board = node.board()
+        ply = 2 * (board.fullmove_number - 1) + (board.turn == chess.BLACK) + len(tail)
+        if first.number is not None and first.number[1] is not None:
+            expected = 2 * (first.number[0] - 1) + first.number[1]
+            if abs(expected - ply) <= 1 and len(tail) + len(frag.moves) <= MAX_TAIL:
+                self.tail = (node, tail + list(frag.moves))
+                return
+        self.tail = None
+
+    def reclaim(self, moves: list[FragMove]) -> None:
+        """Moves given up as unresolved that were read after all."""
+        refs = {fm.ref for fm in moves}
+        kept = []
+        for u in self.out.unresolved:
+            left = [r for r in u.refs if r not in refs]
+            if len(left) == len(u.refs):
+                kept.append(u)
+            elif left:
+                kept.append(Unresolved(left, u.text, u.reason))
+        self.out.unresolved = kept
+        # Words taken off the count of moves when they were given up ("ltln"), now read as moves.
+        self.out.moves_found += sum(1 for fm in moves if fm.move.weak or fm.move.unknown is not None)
+
+    def decoded(self, trial: _Trial, moves: list[FragMove]) -> _Trial:
+        """The fragment worked out move by move (see :mod:`.decoder`), if that reads it further."""
+        found = decoder.decode(self.pieces, trial.parent.board(), moves, _number_fits)
+        if len(found.moves) < len(trial.moves) + DECODE_GAIN:
+            return trial
+        reason = None if len(found.moves) == len(moves) else "illegal"
+        return _Trial(trial.parent, found.moves, reason, found.guessed)
 
     def apply(self, parent: Node, frag_moves: list[FragMove], moves: list[chess.Move], main_style: bool,
               guessed: set[int] = frozenset()) -> Node:

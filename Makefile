@@ -1,7 +1,7 @@
 VENV := backend/.venv
 PY := $(VENV)/bin/python
 
-.PHONY: setup dev backend frontend test build report audit vision-data vision-train
+.PHONY: setup dev backend frontend test build report report-library report-save audit vision-data vision-train
 
 setup:
 	python3 -m venv $(VENV)
@@ -25,6 +25,14 @@ test:
 # Accuracy report for one book: make report BOOK=samples/mybook.pdf
 report:
 	$(PY) scripts/report.py "$(BOOK)"
+
+# Accuracy of every book in the library, compared with the numbers kept in .data/report.json
+# (make report-save keeps the current numbers there). Nothing in the library is written.
+report-library:
+	$(PY) scripts/report.py --library $(if $(wildcard .data/report.json),--compare .data/report.json)
+
+report-save:
+	$(PY) scripts/report.py --library --save .data/report.json
 
 audit:
 	$(PY) scripts/diagram_audit.py "$(BOOK)"

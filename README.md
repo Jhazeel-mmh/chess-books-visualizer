@@ -144,13 +144,34 @@ come out as `lLl`, `ttJ` or `lb`, a king as `'it>`. Pages with such text are rea
   position does). When a game breaks on an illegal move, the parser tries undoing up to two
   look-alike confusions (`c`/`e`, `b`/`h`, `3`/`8`, `5`/`6`) and keeps them only if several
   more moves then become legal.
+- **Mangled text.** Split numbers (`1 1.0-0` is move 11, `1 O.` is 10), a dot read as `J`
+  (`10JWe2`), split squares (`d 5`), two moves without a space (`1.e4e6`), a `[` that is a
+  bishop, and an origin glued to a junk spelling (`13bc8`: the rook from the b-file) are read
+  as printed. A bare pawn move (`e5`) is never a capture: captures print their file.
+- **Figurines read by their shape.** The same knight may be spelled `T`, `tLl` or `4J` from
+  page to page, but it is printed clearly: the figurines of moves already linked are cropped
+  from the page and labelled, and every other figurine is read by the labelled shapes nearest
+  to it (`cbv/vision/figurines.py`). This second reading is kept only if it reads the book
+  better; the shapes are cached in `glyphs.npz` next to the book.
+- **Moves worked out from what follows** (`cbv/parse/decoder.py`). Where a fragment still
+  breaks, every legal move is scored against the print (square and its look-alikes, piece,
+  capture, origin, check), and a search keeps the best few sequences. A worked-out move is
+  taken only when the moves printed after it bear it out, more of them when the print looked
+  clean, and only when no other reading fits nearly as well; it is shown as uncertain.
+- **A broken main line picked up again.** When a game's main line breaks off, its unread
+  moves are read together with the next main-line paragraph (`9.Bg3 Bg7 10.Qe2 Ne7` decides
+  the garbled 7...Qc7 before it). A game also starts from a garbled first move.
 - **Puzzle numbers** are read from captions such as `123) Black to play` (also `123}`) and
   exercise numbers such as `2.05`, each caption going to its closest diagram.
 
-On the sample library this links about 4,900 moves and 800 puzzle solutions in a scanned
-puzzle book (Nunn) where about 100 moves were found before, with about 96% of the moves
-printed with `+` or `#` giving check on the board. Very poor OCR (some pieces read as digits)
-still leaves many moves unlinked.
+On the sample library, moves linked in the scanned books: Nunn 70%, De la Villa 49%, Gulko
+39%, Nimzovich's *Mi sistema* 31% (from 65%, 44%, 29% and 22%), with more of the linked moves
+agreeing with the checks and captures the book prints. Two tools measure this:
+`make report-library` reads every book of the library again in memory and compares it with
+the numbers kept by `make report-save`; `scripts/ocr_bench.py` damages a clean digital book the
+way OCR does and checks every move read from the damaged text against the clean one (on the
+sample EPUB: 61% of the moves read back, 92% of them right). Very poor OCR still leaves many
+moves unlinked: those can be completed with *Fix moves*.
 
 ## Development
 

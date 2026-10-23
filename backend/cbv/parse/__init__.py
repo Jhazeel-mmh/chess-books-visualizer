@@ -37,6 +37,32 @@ class Analysis:
     pieces: PieceMap
     style: str
 
+    def agreement(self) -> dict:
+        """How often the linked moves agree with what the book printed after them.
+
+        Of the moves printed with + or # (not an evaluation such as "+–"), how many give check; of
+        those printed with x, how many capture. A misread move rarely keeps either sign right.
+        """
+        checks = checks_ok = takes = takes_ok = 0
+        for game in self.anchored.games:
+            for node in game.nodes():
+                if node.move is None:
+                    continue
+                for ref in node.refs:
+                    text = self.doc.blocks[ref.block].text
+                    printed = text[ref.start:ref.end]
+                    evaluation = printed.endswith("+") and text[ref.end:ref.end + 1] in ("–", "-", "−", "/", "=")
+                    if ("+" in printed and not evaluation) or "#" in printed:
+                        checks += 1
+                        checks_ok += chess.Board(node.fen).is_check()
+                    if "x" in printed:
+                        takes += 1
+                        takes_ok += chess.Board(node.parent.fen).is_capture(node.move)
+        return {
+            "checks": checks, "check_precision": checks_ok / checks if checks else None,
+            "captures": takes, "capture_precision": takes_ok / takes if takes else None,
+        }
+
     def sections(self) -> list[dict]:
         """The book's sections (table of contents, chapters, or else headings), and what each holds."""
         found = self.doc.sections or [

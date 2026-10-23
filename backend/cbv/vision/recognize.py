@@ -55,8 +55,9 @@ class BoardCache:
     part. The cache is dropped automatically when the model or this code changes.
     """
 
-    def __init__(self, path: Path | None):
+    def __init__(self, path: Path | None, read_only: bool = False):
         self.path = path
+        self.read_only = read_only  # used, never written (reports over a library)
         self.boards: dict[str, list[dict]] = {}
         # Boards read in this run: still open to the book-level second look (see ``finish``).
         self.fresh: dict[str, list[ReadBoard]] = {}
@@ -87,8 +88,9 @@ class BoardCache:
         self.fresh = {}
 
     def save(self) -> None:
+        changed = bool(self.fresh)
         self.finish()
-        if self.path:
+        if self.path and changed and not self.read_only:
             self.path.write_text(json.dumps({"version": _version(), "boards": self.boards}))
 
 

@@ -190,3 +190,75 @@ def test_captions_with_chapter_numbers_split_by_ocr():
     board = (70, 160, 196, 288)
     for caption, label in (("Diagrama 1 0.1 ", "10.1"), ("Diagrama 1 .1 2 ", "1.12"), ("2.1 0 Juegan negras", "2.10")):
         assert _diagram_labels([board], [_line(caption, 90, 292, 160, 302)], ocr=True) == [label]
+
+
+def shapes(text: str) -> list[tuple]:
+    return [(t.kind, t.text, t.number if t.kind == "number" else None) for t in tokenize(text, ocr=True)]
+
+
+def test_move_numbers_split_by_a_space():
+    # Mi sistema: "1 1.0-0" is move 11, "2 l ..." Black's 21st, "1 O.c4" move 10.
+    assert shapes("1 1.0-0 h5")[0] == ("number", "1 1.", 11)
+    assert shapes("por 2 l ...ib4.")[0] == ("number", "2 l ...", 21)
+    assert shapes("clave 1 O.c4, etc.")[:2] == [("number", "1 O.", 10), ("move", "c4", None)]
+
+
+def test_squares_split_by_a_space_and_moves_printed_together():
+    toks = shapes("1.e4e6 2.d4 d 5 3.e5 e 5")
+    assert [t[1] for t in toks] == ["1.", "e4", "e6", "2.", "d4", "d 5", "3.", "e5", "e 5"]
+    # The digit after a split file is a move number when a dot follows it ("d 5." is not d5).
+    assert ("move", "d 5", None) not in shapes("12.d 5. h6")
+
+
+def test_a_number_glued_to_its_move_and_a_bracket_that_is_a_bishop():
+    toks = tokenize("9.ig3 ig7 10JWe2 Te7", ocr=True)
+    assert [(t.kind, t.text) for t in toks][3:5] == [("number", "10J"), ("move", "We2")]
+    assert toks[3].number == 10 and toks[3].black is False
+    toks = tokenize("4.[g5 8.[xc6+ bxc6", ocr=True)
+    assert [t.kind for t in toks] == ["number", "move", "number", "move", "move"]
+    assert toks[1].move.piece == "[" and toks[3].move.capture
+
+
+def test_a_piece_letter_with_its_origin_is_a_move_not_a_word():
+    toks = {t.text: t.move for t in tokenize("24.cxd4 Rac8 25.f3 Ree7 18.N1d2 Tad1", ocr=True) if t.kind == "move"}
+    assert (toks["Rac8"].piece, toks["Rac8"].from_file) == ("R", 0)
+    assert (toks["Ree7"].piece, toks["Ree7"].from_file) == ("R", 4)
+    assert (toks["N1d2"].piece, toks["N1d2"].from_rank) == ("N", 0)
+    assert toks["Tad1"].piece == "T"
+    assert [t.text for t in tokenize("las blancas del final", ocr=True) if t.kind == "move" and not t.move.weak] == []
+
+
+def test_game_headers_are_names_not_sentences():
+    from cbv.ingest.pdf import GAME_HEADER
+
+    for header in ("Nimzovich - Yates", "von Bardeleben - Nisnievich", "Partida n° 1 3", "Nimzovich - N. N."):
+        assert GAME_HEADER.match(header), header
+    for prose in ("partida Nirnzovich - Freyrnann, (página 79).", "Nirnzovich - Nilsson (página 77)",
+                  "nobles sentimientos entre piezas- muestra,", "tida Thomas - Alekhine. La partida siguió así:"):
+        assert not GAME_HEADER.match(prose), prose
+
+
+def test_a_scanned_line_after_a_sentence_starts_a_paragraph():
+    from cbv.parse.fragments import _starts_line
+
+    text = "El negro debió jugar 4 ... c5. \n5.Bd3 e6 6.0-0"
+    assert _starts_line(text, text.index("5.Bd3"), scanned=True)
+    assert not _starts_line(text, text.index("5.Bd3"), scanned=False)
+    assert not _starts_line("y luego \n5.Bd3", 10, scanned=True)  # the sentence goes on
+
+
+def test_a_bare_pawn_move_is_never_a_capture():
+    board = chess.Board("4k3/8/8/4P3/3p4/8/8/4K3 b - - 0 1")
+    assert candidates(board, ParsedMove(to_square=chess.E4), letter_map("en")) == []  # d4 can't go to e4 without "x"
+    assert [board.san(m) for m in candidates(board, ParsedMove(to_square=chess.D3), letter_map("en"))] == ["d3"]
+
+
+def test_an_origin_glued_to_a_spelling_says_which_piece_moved():
+    board = chess.Board("1r3rk1/8/8/8/8/8/8/6K1 b - - 0 1")
+    pieces = letter_map("en", {"13": chess.ROOK, "13b": chess.ROOK})
+    # "13bc8": the rook from the b-file, though "13b" was learned as a whole spelling too.
+    assert [board.san(m) for m in candidates(board, ParsedMove(piece="13b", to_square=chess.C8), pieces)] == ["Rbc8"]
+    # A spelling that merely ends in a letter: read whole when the split reading fits nothing.
+    board = chess.Board("6k1/8/8/8/8/8/8/R5K1 w - - 0 1")
+    pieces = letter_map("en", {"!": chess.ROOK, "!h": chess.ROOK})
+    assert [board.san(m) for m in candidates(board, ParsedMove(piece="!h", to_square=chess.A7), pieces)] == ["Ra7"]

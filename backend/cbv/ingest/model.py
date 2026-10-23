@@ -60,6 +60,9 @@ class Block:
     points: int | None = None
     # Moves the reader fixed in this block's text (PDF books).
     fixes: list[MoveFix] = field(default_factory=list)
+    # Scans: the piece each printed move's figurine looks like, by the end of the move in the text,
+    # and whether the shape is sure (see :mod:`cbv.vision.figurines`).
+    seen: dict[int, tuple[int, bool]] = field(default_factory=dict)
 
     def is_bold(self, start: int, end: int) -> bool:
         """True if most of ``text[start:end]`` is bold."""

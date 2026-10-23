@@ -11,7 +11,7 @@ anchoring step later decides which position each fragment starts from.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..ingest.model import Block, DocStream, MoveFix, TextRef
 from ..notation.tokenizer import ParsedMove, Token, tokenize
@@ -109,6 +109,20 @@ def events(doc: DocStream) -> list[Event]:
     return scanner.out
 
 
+def _starts_line(text: str, start: int, scanned: bool) -> bool:
+    """Whether moves at ``start`` begin a paragraph: the block's start, or in a scan (whose lines a
+    note and the moves after it share) a line after one that ended a sentence."""
+    before = text[:start]
+    if not before.strip(" \t\n(["):
+        return True
+    if not scanned:
+        return False
+    line_start = before.rfind("\n")
+    if line_start < 0 or before[line_start + 1:].strip(" \t(["):
+        return False
+    return before[:line_start].rstrip().endswith((".", ":", ";", "!", "?", ")"))
+
+
 def _with_fixes(tokens: list[Token], fixes: list[MoveFix], text: str) -> list[Token]:
     """The block's tokens with the reader's fixes: what lies in a fixed span is replaced (or removed)."""
     if not fixes:
@@ -123,6 +137,7 @@ def _with_fixes(tokens: list[Token], fixes: list[MoveFix], text: str) -> list[To
 
 
 _LETTERS = re.compile(r"[^\W\d_]+")
+_MIXED_CASE = re.compile(r"[a-z][A-Z]")
 _VOWELS = set("aeiouáéíóúAEIOUÁÉÍÓÚ")
 
 
@@ -130,7 +145,8 @@ def _garbled(word: str) -> bool:
     """An OCR word that may be a move gone unreadable ("ltln", "{cJ#"), not a word of prose."""
     if not 2 <= len(word) <= 8 or any(c.isspace() for c in word) or not any(c.isalnum() for c in word):
         return False
-    return not (_LETTERS.fullmatch(word) and _VOWELS & set(word))
+    # A capital after a small letter ("lDo", "tLl") is no word of prose, vowels or not.
+    return not (_LETTERS.fullmatch(word) and _VOWELS & set(word) and not _MIXED_CASE.search(word))
 
 
 def _ref(text: str, labels: set[str], ocr: bool = False) -> str | None:
@@ -170,8 +186,9 @@ class _Scanner:
         for t in tokens:
             gap = text[prev_end:t.start]
             word = gap.strip()
-            if word and block.ocr and self.moves and t.kind in ("move", "number") and _garbled(word):
-                # "3.ltln ltlc6 4.ic4": an unreadable move doesn't end the line; the parser may work it out.
+            if word and block.ocr and (self.moves or self.number) and t.kind in ("move", "number") and _garbled(word):
+                # "3.ltln ltlc6 4.ic4", "l.lDo e6": an unreadable move doesn't end the line (nor keep it
+                # from starting); the parser may work it out.
                 start = prev_end + gap.index(word)
                 self.add_move(index, Token("move", start, start + len(word), word, move=ParsedMove(unknown=word)))
             elif word:
@@ -232,7 +249,11 @@ class _Scanner:
             self.after_open = self.pending_open
             self.pending_open = False
         block = self.blocks[index]
-        self.moves.append(FragMove(TextRef(index, start, t.end), block.text[start:t.end], t.move, number))
+        move = t.move
+        if t.end in block.seen:
+            piece, sure = block.seen[t.end]
+            move = replace(move, seen=piece, seen_sure=sure)
+        self.moves.append(FragMove(TextRef(index, start, t.end), block.text[start:t.end], move, number))
 
     def flush(self) -> None:
         if not self.moves:
@@ -244,7 +265,7 @@ class _Scanner:
         self.out.append(Fragment(
             moves=self.moves,
             block=first.block,
-            starts_para=not block.text[:first.start].strip(" \t\n(["),
+            starts_para=_starts_line(block.text, first.start, block.ocr),
             bold=bold * 2 > len(self.moves),
             after_open=self.after_open,
             heading=block.kind == "heading",

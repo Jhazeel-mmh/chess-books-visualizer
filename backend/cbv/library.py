@@ -13,6 +13,7 @@
                         progress.json   solving: results per problem and training cycles
                         annotations.json  the reader's arrows and circles per position
                         move_fixes.json  moves the reader entered on the pages (or false ones removed)
+                        glyphs.npz  scans: figurine shapes cropped from the pages (rebuilt if lost)
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from pathlib import Path
 
 from . import ingest, trainer
 from .parse import analyze
+from .vision import figurines
 
 log = logging.getLogger(__name__)
 
@@ -246,6 +248,8 @@ def _analyze(book_id: str) -> None:
                 block.placement, block.turn = fix["placement"], fix.get("turn") or block.turn
                 block.confidence, block.uncertain, block.alternatives = 1.0, [], {}
         result = analyze(book.doc)
+        # Scans: a second reading with each figurine read by its shape, kept if it reads better.
+        result = figurines.read_by_shape(book, result, d / "glyphs.npz")
         data = result.to_dict()
         for diagram in data["diagrams"]:
             diagram["corrected"] = diagram["key"] in corrections

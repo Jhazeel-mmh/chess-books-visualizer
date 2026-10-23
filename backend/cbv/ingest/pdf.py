@@ -33,9 +33,14 @@ _BOLD_FONT = re.compile(r"bold|black|heavy|semibold|demi", re.IGNORECASE)
 _NO_BOX = (math.nan,) * 4
 
 # "Karpov – Kasparov, Moscow 1985", "165. Anatoly Karpov – Alexei Shirov", "Partida n° 45".
+# "Nimzovich - Yates", "von Bardeleben - Nisnievich", "Partida n° 12". Names are capitalized and the
+# dash stands between spaces; not a sentence ("partida Nirnzovich - Freyrnann, (página 79).") nor a
+# word broken at the end of a line ("piezas- muestra,").
+_PARTICLE = r"(?:von|van|de|der|den|da|di|du|le|la|ten|ter)\s"
 GAME_HEADER = re.compile(
-    r"""^\s*(?:\d{1,4}[.)]?\s+)?
-        (?:[A-ZÁÉÍÓÚÑÖÜ][\w'’.\-]*\s?){1,4}\s?[–—-]\s(?:[A-ZÁÉÍÓÚÑÖÜ]|N\.\s?N)
+    rf"""^\s*(?:\d{{1,4}}[.)]?\s+)?
+        (?-i:(?:{_PARTICLE})?[A-ZÁÉÍÓÚÑÖÜ][\w'’.\-]*\s?){{1,4}}\s[–—-]\s(?-i:(?:{_PARTICLE})?[A-ZÁÉÍÓÚÑÖÜ]|N\.\s?N)
+        (?!.*\b(?:p[áa]ginas?|pages?)\b)(?![^\n]*(?:[,;:]|[a-záéíóúñ\d)]\.)\s*$)
       | ^\s*(?:partida|game|juego|ejemplo)\s+(?:n\s?[°º.o]?\s*)?\d+""",
     re.VERBOSE | re.IGNORECASE,
 )
@@ -93,11 +98,11 @@ class _ImageBoard:
 class PdfBook:
     format = "pdf"
 
-    def __init__(self, path: Path, cache: Path | None = None, progress=None):
+    def __init__(self, path: Path, cache: Path | None = None, progress=None, read_only: bool = False):
         from ..vision.recognize import BoardCache
 
         self.path = path
-        boards_cache = BoardCache(cache)
+        boards_cache = BoardCache(cache, read_only)
         mapper = GlyphMapper()
         with pymupdf.open(path) as pdf:
             self.page_sizes = [(p.rect.width, p.rect.height) for p in pdf]

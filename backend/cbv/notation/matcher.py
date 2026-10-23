@@ -27,13 +27,22 @@ def candidates(board: chess.Board, pm: ParsedMove, pieces: PieceMap) -> list[che
             if (board.is_kingside_castling(m) if pm.castle == "K" else board.is_queenside_castling(m))
         ]
 
-    piece_type = pieces.piece(pm.piece) if pm.piece else chess.PAWN
-    if piece_type is None and len(pm.piece) > 1 and pm.piece[-1] in "abcdefgh" and pm.from_file is None:
-        # OCR glued the origin file to the piece ("ttlbd2": "ttl" is a knight, from the b-file).
-        base = pieces.piece(pm.piece[:-1])
-        if base is not None:
-            pm = replace(pm, piece=pm.piece[:-1], from_file="abcdefgh".index(pm.piece[-1]))
-            piece_type = base
+    split = glued_origin(pm) if pm.piece else None
+    if split is not None and pieces.piece(split.piece) is not None:
+        # OCR may have glued the origin to the piece ("ttlbd2": "ttl" is a knight, from the b-file;
+        # "tLl1d2"), even where the whole spelling was learned as well. Read that way if it fits;
+        # otherwise the last character was part of the spelling.
+        found = _matching(board, split, pieces.piece(split.piece), pieces)
+        if found or pieces.piece(pm.piece) is None:
+            return found
+    return _matching(board, pm, pieces.piece(pm.piece) if pm.piece else chess.PAWN, pieces)
+
+
+def _matching(board: chess.Board, pm: ParsedMove, piece_type: chess.PieceType | None, pieces: PieceMap) -> list[chess.Move]:
+    """The legal moves of ``piece_type`` (None: any piece) that fit every printed detail."""
+    if pm.seen is not None and pm.piece and (piece_type is None or (pm.seen_sure and piece_type != pm.seen)):
+        # A scan: the figurine's shape, where the spelling is unknown or clearly says another piece.
+        piece_type = pm.seen
     if piece_type is None and (pm.weak or pm.piece not in pieces.wildcards):
         return []
     promotion = None
@@ -51,9 +60,13 @@ def candidates(board: chess.Board, pm: ParsedMove, pieces: PieceMap) -> list[che
         from_mask &= chess.BB_FILES[pm.from_file]
     if pm.from_rank is not None:
         from_mask &= chess.BB_RANKS[pm.from_rank]
+    # A pawn printed with neither its file nor "x" ("e5") goes straight ahead: captures say "dxe5".
+    pawn_push = piece_type == chess.PAWN and pm.from_file is None and not pm.capture
     found = []
     for m in board.generate_legal_moves(from_mask, chess.BB_SQUARES[pm.to_square]):
         if pm.capture and not board.is_capture(m):
+            continue
+        if pawn_push and board.is_capture(m):
             continue
         # Books often leave out "=Q"; an unmarked promotion means a queen.
         if m.promotion != (promotion or (chess.QUEEN if m.promotion else None)):
@@ -63,6 +76,19 @@ def candidates(board: chess.Board, pm: ParsedMove, pieces: PieceMap) -> list[che
     if hint is not None:
         found = [m for m in found if board.piece_type_at(m.from_square) == hint]
     return found
+
+
+def glued_origin(pm: ParsedMove) -> ParsedMove | None:
+    """The move with a file or rank split off the end of its piece spelling ("13bc8" → "13", b-file)."""
+    symbol = pm.piece
+    if not symbol or len(symbol) < 2 or pm.from_file is not None or pm.from_rank is not None:
+        return None
+    last = symbol[-1]
+    if last in "abcdefgh":
+        return replace(pm, piece=symbol[:-1], from_file="abcdefgh".index(last))
+    if last in "12345678":
+        return replace(pm, piece=symbol[:-1], from_rank=int(last) - 1)
+    return None
 
 
 def match(board: chess.Board, pm: ParsedMove, pieces: PieceMap) -> chess.Move | None:

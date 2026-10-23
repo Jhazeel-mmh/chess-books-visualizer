@@ -50,11 +50,11 @@ class EpubSource:
 class EpubBook:
     format = "epub"
 
-    def __init__(self, path: Path, cache: Path | None = None, progress=None):
+    def __init__(self, path: Path, cache: Path | None = None, progress=None, read_only: bool = False):
         from ..vision.recognize import BoardCache
 
         self.path = path
-        self._boards = BoardCache(cache)
+        self._boards = BoardCache(cache, read_only)
         with zipfile.ZipFile(path) as z:
             self.names = set(z.namelist())
             opf_path = _rootfile(z)
